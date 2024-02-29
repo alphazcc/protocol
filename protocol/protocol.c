@@ -6,6 +6,10 @@
  */
 #include "protocol.h"
 
+/* Global variable definitions */
+msg_pkg_t msg_pkg;
+msg_buf_t msg_buf;
+
 /* CRC16 verification */
 static uint16_t mc_check_crc16(const uint8_t *data, uint8_t len)
 {
@@ -28,62 +32,62 @@ static uint16_t mc_check_crc16(const uint8_t *data, uint8_t len)
 }
 
 /* Packet decoding */
-msg_pkg_t *unpkg_frame(const uint8_t *msg_buf, const uint8_t size)
+msg_pkg_t *unpkg_frame(const uint8_t *_msg_buf, const uint8_t size)
 {
     msg_pkg_t *_msg_pkg = &msg_pkg;
     uint8_t cnt = 0;
     uint16_t rxchkval = 0;  /* Received parity value */
     uint16_t calchkval = 0; /* Calculate the resulting parity value */
 
-    if (NULL == msg_buf)
+    if (NULL == _msg_buf)
     {
         _msg_pkg->pkg_state = MSG_PKG_NULL;
         goto msg_err;
     }
 
-    if (msg_buf[cnt++] != MSG_FRAME_HEAD0)
+    if (_msg_buf[cnt++] != MSG_FRAME_HEAD0)
     {
         _msg_pkg->pkg_state = MSG_FRAME_FORMAT_ERR;
         goto msg_err;
     }
-    if (msg_buf[cnt++] != MSG_FRAME_HEAD1)
+    if (_msg_buf[cnt++] != MSG_FRAME_HEAD1)
     {
         _msg_pkg->pkg_state = MSG_FRAME_FORMAT_ERR;
         goto msg_err;
     }
-    if (msg_buf[cnt++] != MSG_FRAME_HEAD2)
+    if (_msg_buf[cnt++] != MSG_FRAME_HEAD2)
     {
         _msg_pkg->pkg_state = MSG_FRAME_FORMAT_ERR;
         goto msg_err;
     }
-    if (msg_buf[cnt++] != MSG_FRAME_HEAD3)
+    if (_msg_buf[cnt++] != MSG_FRAME_HEAD3)
     {
         _msg_pkg->pkg_state = MSG_FRAME_FORMAT_ERR;
         goto msg_err;
     }
 
     /* CRC16 verification */
-    calchkval = mc_check_crc16(msg_buf, size - 4);
+    calchkval = mc_check_crc16(_msg_buf, size - 4);
 
     /* Received parity value */
-    rxchkval = ((uint16_t)msg_buf[size - 3] << 8) + msg_buf[size - 4];
+    rxchkval = ((uint16_t)_msg_buf[size - 3] << 8) + _msg_buf[size - 4];
 
     if (calchkval == rxchkval)
     {
         /* Parse data into structs */
         _msg_pkg->pkg = &_msg_pkg->frame;
-        _msg_pkg->pkg->type = msg_buf[cnt++];
-        _msg_pkg->pkg->cmd = msg_buf[cnt++];
-        _msg_pkg->pkg->code = (uint16_t)msg_buf[cnt++] << 8;
-        _msg_pkg->pkg->code += (uint16_t)msg_buf[cnt++];
-        _msg_pkg->pkg->datalen = (uint16_t)msg_buf[cnt++] << 8;
-        _msg_pkg->pkg->datalen += (uint16_t)msg_buf[cnt++];
+        _msg_pkg->pkg->type = _msg_buf[cnt++];
+        _msg_pkg->pkg->cmd = _msg_buf[cnt++];
+        _msg_pkg->pkg->code = (uint16_t)_msg_buf[cnt++] << 8;
+        _msg_pkg->pkg->code += (uint16_t)_msg_buf[cnt++];
+        _msg_pkg->pkg->datalen = (uint16_t)_msg_buf[cnt++] << 8;
+        _msg_pkg->pkg->datalen += (uint16_t)_msg_buf[cnt++];
 
         if (_msg_pkg->pkg->datalen)
         {
             for (uint8_t i = 0; i < _msg_pkg->pkg->datalen; i++)
             {
-                _msg_pkg->pkg->data[i] = msg_buf[cnt++];
+                _msg_pkg->pkg->data[i] = _msg_buf[cnt++];
             }
         }
         _msg_pkg->pkg_state = MSG_OK;

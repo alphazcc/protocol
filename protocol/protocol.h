@@ -63,11 +63,11 @@ typedef struct msg_buf
     int8_t buf_state;
 } msg_buf_t;
 
-/* Global variable definitions */
-msg_pkg_t msg_pkg;
-msg_buf_t msg_buf;
+/* Global variable declaration */
+extern msg_pkg_t msg_pkg;
+extern msg_buf_t msg_buf;
 
-msg_pkg_t *unpkg_frame(const uint8_t *msg_buf, const uint8_t size);
-msg_buf_t *pkg_frame(const msg_frame_t *msg_pkg);
+msg_pkg_t *unpkg_frame(const uint8_t *_msg_buf, const uint8_t size);
+msg_buf_t *pkg_frame(const msg_frame_t *_msg_pkg);
 
 #endif
