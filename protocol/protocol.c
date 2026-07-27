@@ -1,14 +1,10 @@
 /**
- * Copyright (c) 2022-2023，HelloAlpha
+ * Copyright (c) 2022-2026, HelloAlpha
  *
  * Change Logs:
  * Date           Author       Notes
  */
 #include "protocol.h"
-
-/* Global variable definitions */
-msg_pkg_t msg_pkg;
-msg_buf_t msg_buf;
 
 /* CRC16 verification */
 static uint16_t mc_check_crc16(const uint8_t *data, uint8_t len)
@@ -32,130 +28,133 @@ static uint16_t mc_check_crc16(const uint8_t *data, uint8_t len)
 }
 
 /* Packet decoding */
-msg_pkg_t *unpkg_frame(const uint8_t *_msg_buf, const uint8_t size)
+int unpkg_frame(const uint8_t *msg_buf, const uint8_t size, msg_pkg_t *msg_pkg)
 {
-    msg_pkg_t *_msg_pkg = &msg_pkg;
     uint8_t cnt = 0;
-    uint16_t rxchkval = 0;  /* Received parity value */
-    uint16_t calchkval = 0; /* Calculate the resulting parity value */
+    uint16_t rxchkval = 0;  /* Received verification code */
+    uint16_t calchkval = 0; /* Calculated check code */
 
-    if (NULL == _msg_buf)
+    if (NULL == msg_buf)
     {
-        _msg_pkg->pkg_state = MSG_PKG_NULL;
-        goto msg_err;
-    }
-
-    if (_msg_buf[cnt++] != MSG_FRAME_HEAD0)
-    {
-        _msg_pkg->pkg_state = MSG_FRAME_FORMAT_ERR;
-        goto msg_err;
-    }
-    if (_msg_buf[cnt++] != MSG_FRAME_HEAD1)
-    {
-        _msg_pkg->pkg_state = MSG_FRAME_FORMAT_ERR;
-        goto msg_err;
-    }
-    if (_msg_buf[cnt++] != MSG_FRAME_HEAD2)
-    {
-        _msg_pkg->pkg_state = MSG_FRAME_FORMAT_ERR;
-        goto msg_err;
-    }
-    if (_msg_buf[cnt++] != MSG_FRAME_HEAD3)
-    {
-        _msg_pkg->pkg_state = MSG_FRAME_FORMAT_ERR;
-        goto msg_err;
+        msg_pkg->pkg_state = MSG_NULL;
+        return MSG_NULL;
     }
 
-    /* CRC16 verification */
-    calchkval = mc_check_crc16(_msg_buf, size - 4);
+    if (msg_buf[cnt++] != MSG_FRAME_HEAD0)
+    {
+        msg_pkg->pkg_state = MSG_FORMAT_ERR;
+        return MSG_FORMAT_ERR;
+    }
+    if (msg_buf[cnt++] != MSG_FRAME_HEAD1)
+    {
+        msg_pkg->pkg_state = MSG_FORMAT_ERR;
+        return MSG_FORMAT_ERR;
+    }
+    if (msg_buf[cnt++] != MSG_FRAME_HEAD2)
+    {
+        msg_pkg->pkg_state = MSG_FORMAT_ERR;
+        return MSG_FORMAT_ERR;
+    }
+    if (msg_buf[cnt++] != MSG_FRAME_HEAD3)
+    {
+        msg_pkg->pkg_state = MSG_FORMAT_ERR;
+        return MSG_FORMAT_ERR;
+    }
 
-    /* Received parity value */
-    rxchkval = ((uint16_t)_msg_buf[size - 3] << 8) + _msg_buf[size - 4];
+    if (msg_buf[size - 2] != MSG_FRAME_TAil0)
+    {
+        msg_pkg->pkg_state = MSG_FORMAT_ERR;
+        return MSG_FORMAT_ERR;
+    }
+    if (msg_buf[size - 1] != MSG_FRAME_TAil1)
+    {
+        msg_pkg->pkg_state = MSG_FORMAT_ERR;
+        return MSG_FORMAT_ERR;
+    }
+
+    /* Calculate the check code */
+    calchkval = mc_check_crc16(msg_buf, size - 4);
+
+    /* Received verification code */
+    rxchkval = ((uint16_t)msg_buf[size - 4] << 8) + msg_buf[size - 3];
 
     if (calchkval == rxchkval)
     {
         /* Parse data into structs */
-        _msg_pkg->pkg = &_msg_pkg->frame;
-        _msg_pkg->pkg->type = _msg_buf[cnt++];
-        _msg_pkg->pkg->cmd = _msg_buf[cnt++];
-        _msg_pkg->pkg->code = (uint16_t)_msg_buf[cnt++] << 8;
-        _msg_pkg->pkg->code += (uint16_t)_msg_buf[cnt++];
-        _msg_pkg->pkg->datalen = (uint16_t)_msg_buf[cnt++] << 8;
-        _msg_pkg->pkg->datalen += (uint16_t)_msg_buf[cnt++];
+        msg_pkg->pkg.type = msg_buf[cnt++];
+        msg_pkg->pkg.cmd = msg_buf[cnt++];
+        msg_pkg->pkg.code = (uint16_t)msg_buf[cnt++] << 8;
+        msg_pkg->pkg.code += (uint16_t)msg_buf[cnt++];
+        msg_pkg->pkg.datalen = (uint16_t)msg_buf[cnt++] << 8;
+        msg_pkg->pkg.datalen += (uint16_t)msg_buf[cnt++];
 
-        if (_msg_pkg->pkg->datalen)
+        if (msg_pkg->pkg.datalen)
         {
-            for (uint8_t i = 0; i < _msg_pkg->pkg->datalen; i++)
+            for (uint8_t i = 0; i < msg_pkg->pkg.datalen; i++)
             {
-                _msg_pkg->pkg->data[i] = _msg_buf[cnt++];
+                msg_pkg->pkg.data[i] = msg_buf[cnt++];
             }
         }
-        _msg_pkg->pkg_state = MSG_OK;
+        msg_pkg->pkg_state = MSG_OK;
+        return MSG_OK;
     }
     else
     {
-        _msg_pkg->pkg_state = MSG_FRAME_CHECK_ERR;
-        goto msg_err;
+        msg_pkg->pkg_state = MSG_FORMAT_ERR;
+        return MSG_FORMAT_ERR;
     }
-    return _msg_pkg;
 
-msg_err:
-    return _msg_pkg;
+    return MSG_OK;
 }
 
 /* Packet packaging */
-msg_buf_t *pkg_frame(const msg_frame_t *_msg_pkg)
+int pkg_frame(const msg_frame_t *msg_frame, msg_buf_t *msg_buf)
 {
-    msg_buf_t *_msg_buf = &msg_buf;
     uint8_t cnt = 0;
 
-    if (NULL == _msg_pkg)
+    if (NULL == msg_frame)
     {
-        _msg_buf->buf_state = MSG_PKG_NULL;
-        goto msg_err;
+        msg_buf->buf_state = MSG_NULL;
+        return MSG_NULL;
     }
 
     /* Add frame header */
-    _msg_buf->buf[cnt++] = MSG_FRAME_HEAD0;
-    _msg_buf->buf[cnt++] = MSG_FRAME_HEAD1;
-    _msg_buf->buf[cnt++] = MSG_FRAME_HEAD2;
-    _msg_buf->buf[cnt++] = MSG_FRAME_HEAD3;
+    msg_buf->buf[cnt++] = MSG_FRAME_HEAD0;
+    msg_buf->buf[cnt++] = MSG_FRAME_HEAD1;
+    msg_buf->buf[cnt++] = MSG_FRAME_HEAD2;
+    msg_buf->buf[cnt++] = MSG_FRAME_HEAD3;
 
     /* Writes instructions to the store */
-    _msg_buf->buf[cnt++] = _msg_pkg->type;
-    _msg_buf->buf[cnt++] = _msg_pkg->cmd;
-    _msg_buf->buf[cnt++] = (_msg_pkg->code & 0xff00) >> 8;
-    _msg_buf->buf[cnt++] = _msg_pkg->code & 0xff;
+    msg_buf->buf[cnt++] = msg_frame->type;
+    msg_buf->buf[cnt++] = msg_frame->cmd;
+    msg_buf->buf[cnt++] = (msg_frame->code & 0xff00) >> 8;
+    msg_buf->buf[cnt++] = msg_frame->code & 0xff;
 
     /* Writes data to the store */
-    _msg_buf->buf[cnt++] = (_msg_pkg->datalen & 0xff00) >> 8;
-    _msg_buf->buf[cnt++] = _msg_pkg->datalen & 0xff;
+    msg_buf->buf[cnt++] = (msg_frame->datalen & 0xff00) >> 8;
+    msg_buf->buf[cnt++] = msg_frame->datalen & 0xff;
 
-    if (_msg_pkg->datalen)
+    if (msg_frame->datalen)
     {
-        for (uint8_t i = 0; i < _msg_pkg->datalen; i++)
+        for (uint8_t i = 0; i < msg_frame->datalen; i++)
         {
-            _msg_buf->buf[cnt++] = _msg_pkg->data[i];
+            msg_buf->buf[cnt++] = msg_frame->data[i];
         }
     }
 
-    /* Calculate the parity value */
-    uint16_t calchkval = mc_check_crc16(_msg_buf->buf, cnt);
+    /* Calculate the check code */
+    uint16_t calchkval = mc_check_crc16(msg_buf->buf, cnt);
 
-    /* Add the parity value */
-    _msg_buf->buf[cnt++] = calchkval & 0xff;
-    _msg_buf->buf[cnt++] = calchkval >> 8;
+    /* Add the check code */
+    msg_buf->buf[cnt++] = calchkval >> 8;
+    msg_buf->buf[cnt++] = calchkval & 0xff;
 
     /* Add frame end */
-    _msg_buf->buf[cnt++] = MSG_FRAME_TAil0;
-    _msg_buf->buf[cnt++] = MSG_FRAME_TAil1;
+    msg_buf->buf[cnt++] = MSG_FRAME_TAil0;
+    msg_buf->buf[cnt++] = MSG_FRAME_TAil1;
 
-    _msg_buf->buf_ptr = _msg_buf->buf;
-    _msg_buf->buf_size = cnt;
-    _msg_buf->buf_state = MSG_OK;
+    msg_buf->buf_size = cnt;
+    msg_buf->buf_state = MSG_OK;
 
-    return _msg_buf;
-
-msg_err:
-    return _msg_buf;
+    return MSG_OK;
 }
