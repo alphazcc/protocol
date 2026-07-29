@@ -63,14 +63,14 @@ void pkg_test_cmd(void)
 {
     kprintf("\r\n----- Packing and unpacking test begin -----\r\n");
 
-    msg_frame_t my_frame = {0x0,
+    msg_frame_t my_frame = {0x00,
                             0x01,
                             0x02,
                             0xabcd,
                             0x0008,
                             {0x12, 0x34, 0x56, 0x78, 0xab, 0xcd, 0xef, 0x5a},
-                            0x0,
-                            0x0};
+                            0x00,
+                            0x00};
 
     uint8_t my_buf[] = {0xed, 0xb9, 0x55, 0xaa,
                         0x01,
