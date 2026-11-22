@@ -1,0 +1,200 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  gcc:
+    name: Ubuntu GCC (sanitizers=${{ matrix.sanitizers }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        sanitizers: [OFF, ON]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo -DPROTO_ENABLE_SANITIZERS=${{ matrix.sanitizers }}
+      - name: Build
+        run: cmake --build build
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+      - name: Verify exported API symbols
+        run: |
+          readelf -sW build/libproto.a \
+            | awk '$4 == "FUNC" && $5 == "GLOBAL" && $6 == "DEFAULT" && $7 != "UND" {print $8}' \
+            | sort -u > actual.txt
+          printf '%s\n' proto_decode proto_encode proto_encode_to \
+            proto_find proto_find_bounded proto_status_str | sort > expected.txt
+          diff -u expected.txt actual.txt
+
+  build-config:
+    name: Build configuration guards
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Debug build disables hardening
+        run: |
+          cmake -S . -B build-debug -DCMAKE_BUILD_TYPE=Debug -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+          cmake --build build-debug
+          if grep -q -- '-D_FORTIFY_SOURCE=2' build-debug/compile_commands.json; then
+            echo "hardening flag must not be present in Debug builds"
+            exit 1
+          fi
+          ctest --test-dir build-debug --output-on-failure
+      - name: Library-only sanitized build
+        run: |
+          cmake -S . -B build-libonly -DPROTO_BUILD_TESTS=OFF -DPROTO_ENABLE_SANITIZERS=ON -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+          cmake --build build-libonly
+          grep -q -- '-fsanitize=address,undefined' build-libonly/compile_commands.json
+      - name: Short-enums ABI guard rejects build
+        run: |
+          printf '#include <proto/protocol.h>\nint main(void){return 0;}\n' > /tmp/proto_short_enums.c
+          if gcc -std=c11 -fshort-enums -Iinclude -c /tmp/proto_short_enums.c -o /tmp/proto_short_enums.o 2>/tmp/proto_short_enums.log; then
+            echo "short-enums build unexpectedly succeeded"
+            exit 1
+          fi
+          grep -q 'proto_status_t ABI is 4 bytes' /tmp/proto_short_enums.log
+
+  crc-table:
+    name: Ubuntu GCC (CRC lookup table)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo -DPROTO_CRC_TABLE=ON -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+      - name: Build
+        run: cmake --build build
+      - name: Verify table definition
+        run: grep -q -- '-DPROTO_CRC_USE_TABLE=1' build/compile_commands.json
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+  find-memchr:
+    name: Ubuntu GCC (memchr header prefilter)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo -DPROTO_FIND_MEMCHR=ON -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+      - name: Build
+        run: cmake --build build
+      - name: Verify memchr definition
+        run: grep -q -- '-DPROTO_FIND_USE_MEMCHR=1' build/compile_commands.json
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+  both-options:
+    name: Ubuntu GCC (CRC table + memchr)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo -DPROTO_CRC_TABLE=ON -DPROTO_FIND_MEMCHR=ON -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+      - name: Build
+        run: cmake --build build
+      - name: Verify both definitions
+        run: |
+          grep -q -- '-DPROTO_CRC_USE_TABLE=1' build/compile_commands.json
+          grep -q -- '-DPROTO_FIND_USE_MEMCHR=1' build/compile_commands.json
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+  msvc:
+    name: Windows MSVC
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S . -B build
+      - name: Build
+        run: cmake --build build --config Release
+      - name: Test
+        run: ctest --test-dir build -C Release --output-on-failure
+
+  windows-mingw:
+    name: Windows MinGW (GCC)
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: mingw-w64-x86_64-gcc mingw-w64-x86_64-cmake mingw-w64-x86_64-make
+      - name: Configure
+        run: cmake -S . -B build -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+  static-analysis:
+    name: Static analysis (cppcheck)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install cppcheck
+        run: sudo apt-get update && sudo apt-get install -y cppcheck
+      - name: Analyze
+        run: cppcheck --enable=warning,performance,portability,style --error-exitcode=1 --inline-suppr -Iinclude -Isrc src tests
+
+  cxx-compat:
+    name: Public header C++11/C++17 compatibility
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile C++ translation unit
+        run: |
+          printf '#include <proto/protocol.h>\nint main() { proto_frame_t f = {}; (void)f; return 0; }\n' > /tmp/proto_cpp_check.cpp
+          g++ -std=c++11 -pedantic-errors -Wall -Wextra -Iinclude -c /tmp/proto_cpp_check.cpp -o /tmp/proto_cpp_check11.o
+          g++ -std=c++17 -pedantic-errors -Wall -Wextra -Iinclude -c /tmp/proto_cpp_check.cpp -o /tmp/proto_cpp_check17.o
+
+  coverage:
+    name: Line coverage gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Instrumented build, test and coverage check
+        run: |
+          set -e
+          mkdir build-cov
+          cd build-cov
+          FLAGS="--coverage -std=c11 -O0 -g -I../include -I../src"
+          for src in protocol crc16; do
+            gcc $FLAGS -c ../src/$src.c -o $src.o
+          done
+          for t in test_protocol test_crc16 test_crc16_diff test_bounds test_properties test_fuzz; do
+            gcc $FLAGS -I../tests ../tests/test_support.c ../tests/$t.c protocol.o crc16.o -o $t
+            ./$t > /dev/null
+          done
+          gcov -b -c protocol.o crc16.o > gcov.txt
+          pct=$(sed -n 's/^Lines executed:\([0-9.]*\)%.*/\1/p' gcov.txt | awk '{s+=$1; n++} END {if(n) printf "%.2f", s/n; else print 0}')
+          echo "line coverage: $pct%"
+          awk -v p="$pct" 'BEGIN { exit !(p >= 99.0) }'
+
+  size-baseline:
+    name: ROM size baseline
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Default configuration text size
+        run: |
+          set -e
+          gcc -std=c11 -Os -Iinclude -Isrc -c src/protocol.c -o /tmp/protocol.o
+          gcc -std=c11 -Os -Iinclude -Isrc -c src/crc16.c -o /tmp/crc16.o
+          total=$(size /tmp/protocol.o /tmp/crc16.o | awk 'NR>1 {s+=$1} END {print s}')
+          echo "default text bytes: $total"
+          [ "$total" -le 2300 ]
+      - name: CRC table configuration text size
+        run: |
+          set -e
+          gcc -std=c11 -Os -DPROTO_CRC_USE_TABLE=1 -Iinclude -Isrc -c src/protocol.c -o /tmp/protocol.o
+          gcc -std=c11 -Os -DPROTO_CRC_USE_TABLE=1 -Iinclude -Isrc -c src/crc16.c -o /tmp/crc16.o
+          total=$(size /tmp/protocol.o /tmp/crc16.o | awk 'NR>1 {s+=$1} END {print s}')
+          echo "table text bytes: $total"
+          [ "$total" -le 2800 ]
